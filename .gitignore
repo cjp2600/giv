@@ -4,8 +4,9 @@
 # IDE
 .idea/
 
-# Secrets (GitHub PAT for scripts/push-to-github.sh)
+# Secrets / env templates (keep local only)
 .env
+.env.example
 
 # Maintainer-only markdown under packaging/ (keep locally; avoid accidental commits)
 /packaging/RELEASE.md
