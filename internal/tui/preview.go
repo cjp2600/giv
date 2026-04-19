@@ -116,12 +116,17 @@ func stripLeadingBOM(b []byte) []byte {
 // showDeletions: when false, omit removed-line text (working tree + green additions only).
 func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, contentWidth int, showDeletions bool) string {
 	w := normWidth(contentWidth)
-	if cf.IsUntracked {
+	if cf.IsUntracked || (len(cf.PorcelainXY) > 0 && cf.PorcelainXY[0] == 'A') {
 		body, err := gogit.ReadWorktreeFile(repoRoot, cf.Path)
 		if err != nil {
 			return warnAccent.Render(fmt.Sprintf("read error: %v", err))
 		}
-		return renderFullNewFile(cf.Path, stripLeadingBOM(body), w)
+		label := "Untracked file — showing full content"
+		if !cf.IsUntracked {
+			label = "New file — showing full content"
+		}
+		note := metaStyle.Render(label)
+		return note + "\n\n" + renderFullContext(cf.Path, stripLeadingBOM(body), w)
 	}
 
 	type diffRes struct {
@@ -177,13 +182,6 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 		return hint + renderUnifiedDiff(cf.Path, diffText, w, showDeletions)
 	}
 	return hint + overlay
-}
-
-func renderFullNewFile(name string, body []byte, width int) string {
-	// Newlines after Render, not embedded in strings — avoids lipgloss merging blocks
-	// with the first code line so cellbuf.Wrap breaks the gutter on line 1 only.
-	note := metaStyle.Render("Untracked file — showing full content")
-	return note + "\n\n" + renderFullContext(name, body, width)
 }
 
 func renderAddedFile(name string, body []byte, width int) string {
