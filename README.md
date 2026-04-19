@@ -13,7 +13,8 @@
 ## Features
 
 - Two-pane layout: **file tree** (tracked vs untracked sections) + **preview** with line numbers and Dracula-style highlighting (via Chroma).
-- Toggle preview mode **`d`**: working-tree view vs full diff including deleted lines.
+- **No filler, change-first**: the preview stays focused on **what actually changed**—additions and edits—without unrelated noise. Toggle **`d`** when you explicitly want deleted lines in the picture too.
+- **Whole-file context**: hunks are rendered **over the full working-tree file**, so you scroll the same overall buffer you’d see in your IDE—not a disconnected patch excerpt—while still jumping edits with **Ctrl+N**.
 - Git shortcuts: **Ctrl+A** (add), **Ctrl+U** (revert per giv rules), **Ctrl+P** (push), **Ctrl+G** (commit changed tracked files with a message), **Ctrl+O** (open file in editor—VS Code `code` if available).
 - Mouse: wheel scroll on each pane when the terminal reports cell motion events.
 
