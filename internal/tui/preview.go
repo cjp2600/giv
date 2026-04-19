@@ -182,8 +182,8 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 func renderFullNewFile(name string, body []byte, width int) string {
 	// Newlines after Render, not embedded in strings — avoids lipgloss merging blocks
 	// with the first code line so cellbuf.Wrap breaks the gutter on line 1 only.
-	note := metaStyle.Render("Untracked file — all lines treated as additions")
-	return note + "\n\n" + renderAddedFile(name, body, width)
+	note := metaStyle.Render("Untracked file — showing full content")
+	return note + "\n\n" + renderFullContext(name, body, width)
 }
 
 func renderAddedFile(name string, body []byte, width int) string {
