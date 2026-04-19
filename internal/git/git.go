@@ -319,6 +319,45 @@ func PushCurrentBranch(ctx context.Context, repoRoot string) error {
 	return err
 }
 
+// CreateBranchFromMain fetches origin, checks out main (or master), pulls latest,
+// then creates and switches to a new branch.
+func CreateBranchFromMain(ctx context.Context, repoRoot, branchName string) error {
+	if strings.TrimSpace(branchName) == "" {
+		return fmt.Errorf("empty branch name")
+	}
+
+	// Fetch latest from origin.
+	if _, err := RunGit(ctx, repoRoot, "fetch", "origin"); err != nil {
+		return fmt.Errorf("fetch: %w", err)
+	}
+
+	// Determine main branch name (main or master).
+	mainBranch := "main"
+	if _, err := RunGit(ctx, repoRoot, "rev-parse", "--verify", "origin/main"); err != nil {
+		if _, err2 := RunGit(ctx, repoRoot, "rev-parse", "--verify", "origin/master"); err2 != nil {
+			return fmt.Errorf("cannot find origin/main or origin/master")
+		}
+		mainBranch = "master"
+	}
+
+	// Switch to main branch.
+	if _, err := RunGit(ctx, repoRoot, "checkout", mainBranch); err != nil {
+		return fmt.Errorf("checkout %s: %w", mainBranch, err)
+	}
+
+	// Pull latest.
+	if _, err := RunGit(ctx, repoRoot, "pull"); err != nil {
+		return fmt.Errorf("pull: %w", err)
+	}
+
+	// Create and switch to new branch.
+	if _, err := RunGit(ctx, repoRoot, "checkout", "-b", branchName); err != nil {
+		return fmt.Errorf("create branch: %w", err)
+	}
+
+	return nil
+}
+
 // CommitWorkingTree runs git commit -a -m message (tracked paths only; git add new files first).
 func CommitWorkingTree(ctx context.Context, repoRoot, message string) error {
 	if strings.TrimSpace(message) == "" {

@@ -53,6 +53,7 @@ func PrintHotkeyHelp(w io.Writer) {
 	printRow("Ctrl+O", "Open selected file in external editor (VS Code if available)")
 	printRow("Ctrl+A", "git add selected file (focus on file list)")
 	printRow("Ctrl+U", "Revert selected file per giv rules (focus on file list)")
+	printRow("Ctrl+B", "Create new branch from latest main")
 
 	printSection("File tree (left pane)")
 	printRow("↑ ↓", "Move through tree rows")
@@ -73,6 +74,11 @@ func PrintHotkeyHelp(w io.Writer) {
 	printRow("Ctrl+G", "Open commit message input (git commit -a)")
 	printRow("Enter", "Run commit with the typed message")
 	printRow("Esc", "Close modal without committing")
+
+	printSection("Branch (Ctrl+B)")
+	printRow("Ctrl+B", "Open branch creation input (fetch + checkout main + create branch)")
+	printRow("Enter", "Create branch from latest main")
+	printRow("Esc", "Close modal without creating")
 
 	_, _ = fmt.Fprintln(w)
 }

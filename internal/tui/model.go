@@ -99,6 +99,11 @@ type fileGitOpDoneMsg struct {
 	err error
 }
 
+// branchDoneMsg is the result of background branch creation.
+type branchDoneMsg struct {
+	err error
+}
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	repoRoot        string
@@ -132,6 +137,10 @@ type Model struct {
 	commitInput     textinput.Model
 	commitErr       string
 	fileOpErr       string
+
+	branchModalOpen bool
+	branchInput     textinput.Model
+	branchErr       string
 }
 
 const previewCacheMaxEntries = 24
@@ -435,6 +444,11 @@ func New(repoRoot string, width, height int) *Model {
 	ci.CharLimit = 500
 	ci.Width = 50
 
+	bi := textinput.New()
+	bi.Placeholder = "Branch name…"
+	bi.CharLimit = 200
+	bi.Width = 50
+
 	m := &Model{
 		repoRoot:     repoRoot,
 		focusLeft:    true,
@@ -443,6 +457,7 @@ func New(repoRoot string, width, height int) *Model {
 		termWidth:    width,
 		termH:        height,
 		commitInput:  ci,
+		branchInput:  bi,
 		previewCache: make(map[string]string, previewCacheMaxEntries),
 	}
 	m.applyWindowSize(width, height)
@@ -633,6 +648,7 @@ func (m *Model) applyWindowSize(width, height int) {
 		iw = 24
 	}
 	m.commitInput.Width = iw
+	m.branchInput.Width = iw
 }
 
 func (m *Model) commitCmd(message string) tea.Cmd {
@@ -643,6 +659,17 @@ func (m *Model) commitCmd(message string) tea.Cmd {
 		defer cancel()
 		err := gogit.CommitWorkingTree(ctx, repo, msg)
 		return commitDoneMsg{err: err}
+	}
+}
+
+func (m *Model) createBranchCmd(name string) tea.Cmd {
+	repo := m.repoRoot
+	n := strings.TrimSpace(name)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := gogit.CreateBranchFromMain(ctx, repo, n)
+		return branchDoneMsg{err: err}
 	}
 }
 
@@ -756,6 +783,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshGitState()
 		return m, m.previewCmd()
 
+	case branchDoneMsg:
+		m.branchModalOpen = false
+		m.branchInput.Blur()
+		if msg.err != nil {
+			m.branchErr = msg.err.Error()
+			return m, nil
+		}
+		m.branchErr = ""
+		m.branchInput.SetValue("")
+		m.refreshGitState()
+		return m, m.previewCmd()
+
 	case fileGitOpDoneMsg:
 		if msg.err != nil {
 			m.fileOpErr = msg.err.Error()
@@ -830,6 +869,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, icmd
 		}
 
+		if m.branchModalOpen {
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				m.branchModalOpen = false
+				m.branchInput.Blur()
+				m.branchErr = ""
+				return m, nil
+			case "enter":
+				n := strings.TrimSpace(m.branchInput.Value())
+				if n == "" {
+					m.branchErr = "empty branch name"
+					return m, nil
+				}
+				m.branchErr = ""
+				return m, m.createBranchCmd(n)
+			}
+			if msg.Type != tea.KeyEnter && m.branchErr != "" {
+				m.branchErr = ""
+			}
+			var icmd tea.Cmd
+			m.branchInput, icmd = m.branchInput.Update(msg)
+			return m, icmd
+		}
+
 		if m.focusLeft && (msg.String() == "enter" || msg.Type == tea.KeyEnter) {
 			if it, ok := m.list.SelectedItem().(rowItem); ok && it.kind == rowTreeDir {
 				m.toggleDirExpandedAndRefresh(it.dirPath)
@@ -887,6 +952,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fileOpErr = ""
 			m.commitInput.SetValue("")
 			return m, m.commitInput.Focus()
+		case "ctrl+b":
+			m.branchModalOpen = true
+			m.branchErr = ""
+			m.fileOpErr = ""
+			m.branchInput.SetValue("")
+			return m, m.branchInput.Focus()
 		case "tab":
 			m.focusLeft = !m.focusLeft
 			return m, nil
@@ -1181,19 +1252,23 @@ func (m *Model) View() string {
 	if h <= 0 {
 		h = 24
 	}
-	if !m.commitModalOpen {
-		return m.mainLayoutView()
+	if m.commitModalOpen {
+		return lipgloss.Place(
+			w, h,
+			lipgloss.Center, lipgloss.Center,
+			m.commitModalView(),
+			lipgloss.WithWhitespaceBackground(lipgloss.Color("232")),
+		)
 	}
-	// Solid dim background so stacking over the darkened UI leaves no gaps
-	// beside the preview scrollbar/border.
-	return lipgloss.Place(
-		w,
-		h,
-		lipgloss.Center,
-		lipgloss.Center,
-		m.commitModalView(),
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("232")),
-	)
+	if m.branchModalOpen {
+		return lipgloss.Place(
+			w, h,
+			lipgloss.Center, lipgloss.Center,
+			m.branchModalView(),
+			lipgloss.WithWhitespaceBackground(lipgloss.Color("232")),
+		)
+	}
+	return m.mainLayoutView()
 }
 
 func (m *Model) mainLayoutView() string {
