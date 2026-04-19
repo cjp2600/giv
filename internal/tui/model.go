@@ -1320,7 +1320,7 @@ func (m *Model) mainLayoutView() string {
 		Width(m.vp.Width).
 		Height(innerH).
 		Render(m.vp.View())
-	scr := scrollbarColumn(m.vp)
+	scr := scrollbarColumn(m.vp, m.previewJumpLines)
 	rightTop := lipgloss.JoinHorizontal(lipgloss.Top, vpStr, scr)
 	rightPadded := rightTop
 
