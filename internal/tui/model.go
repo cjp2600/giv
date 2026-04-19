@@ -141,6 +141,7 @@ type Model struct {
 	branchModalOpen bool
 	branchInput     textinput.Model
 	branchErr       string
+	branchCreating  bool
 }
 
 const previewCacheMaxEntries = 24
@@ -784,6 +785,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.previewCmd()
 
 	case branchDoneMsg:
+		m.branchCreating = false
 		m.branchModalOpen = false
 		m.branchInput.Blur()
 		if msg.err != nil {
@@ -870,6 +872,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.branchModalOpen {
+			if m.branchCreating {
+				if msg.String() == "ctrl+c" {
+					return m, tea.Quit
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "ctrl+c":
 				return m, tea.Quit
@@ -885,6 +893,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.branchErr = ""
+				m.branchCreating = true
 				return m, m.createBranchCmd(n)
 			}
 			if msg.Type != tea.KeyEnter && m.branchErr != "" {
