@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -362,7 +363,7 @@ func formatTreeDirRow(listWidth int, treePrefix string, seg string, expanded, se
 	return lipgloss.NewStyle().Width(listWidth).Render(row)
 }
 
-func snapshotSignature(s gogit.Snapshot) string {
+func snapshotSignature(repoRoot string, s gogit.Snapshot) string {
 	var b strings.Builder
 	b.WriteString(s.Branch)
 	b.WriteByte('|')
@@ -376,6 +377,10 @@ func snapshotSignature(s gogit.Snapshot) string {
 		}
 		if f.HasStaged {
 			b.WriteByte('s')
+		}
+		// Include mtime so edits to already-modified files invalidate the cache.
+		if info, err := os.Stat(filepath.Join(repoRoot, f.Path)); err == nil {
+			fmt.Fprintf(&b, "@%d", info.ModTime().UnixNano())
 		}
 		b.WriteByte(';')
 	}
@@ -1111,7 +1116,7 @@ func (m *Model) refreshGitState() bool {
 	defer cancel()
 
 	snap := gogit.SnapshotFromRepo(ctx, m.repoRoot)
-	sig := snapshotSignature(snap)
+	sig := snapshotSignature(m.repoRoot, snap)
 	if sig == m.snapSig {
 		return false
 	}
