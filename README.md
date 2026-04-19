@@ -26,9 +26,26 @@
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+A [personal tap](https://github.com/cjp2600/homebrew-giv) installs `giv` via a formula that **builds from source** on your machine (Homebrew pulls in **Go** as a build dependency).
+
+```bash
+brew tap cjp2600/giv
+brew install giv
+```
+
+Upgrade after a new release:
+
+```bash
+brew update && brew upgrade giv
+```
+
 ### Prebuilt binaries
 
-On each git tag matching **`v*`** (for example `v1.2.0`), [GitHub Actions](.github/workflows/release.yml) builds **linux / macOS / Windows** (`amd64` and `arm64`) and uploads **`tar.gz` / `.zip`** plus **`SHA256SUMS`** to the [Releases](https://github.com/cjp2600/giv/releases) page. That is the usual pattern for small Go CLIs so users can download a binary without installing Go.
+If you prefer not to compile locally, grab an archive from [Releases](https://github.com/cjp2600/giv/releases) instead.
+
+On each git tag matching **`v*`** (for example `v1.2.0`), [GitHub Actions](.github/workflows/release.yml) builds **linux / macOS / Windows** (`amd64` and `arm64`) and uploads **`tar.gz` / `.zip`** plus **`SHA256SUMS`**. That is the usual pattern for small Go CLIs so users can download a binary without installing Go.
 
 ### From source
 
