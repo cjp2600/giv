@@ -3,3 +3,6 @@
 
 # IDE
 .idea/
+
+# Secrets (GitHub PAT for scripts/push-to-github.sh)
+.env
