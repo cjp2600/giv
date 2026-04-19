@@ -1,0 +1,5 @@
+# Build output (do not commit the binary)
+/giv
+
+# IDE
+.idea/
