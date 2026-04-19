@@ -1,0 +1,82 @@
+# Build cross-platform binaries and attach them to a GitHub Release when you push a tag v*.
+# Typical flow: git tag v1.2.3 && git push origin v1.2.3 — the workflow creates/updates the
+# release and uploads tar.gz / zip plus SHA256SUMS.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build and package
+        env:
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build release tmp
+
+          build_one() {
+            local goos=$1 goarch=$2
+            local ext=""
+            [[ "$goos" == windows ]] && ext=".exe"
+            local out="giv-${goos}-${goarch}${ext}"
+            echo "Building ${out}"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 \
+              go build -trimpath -ldflags="-s -w" -o "build/${out}" ./cmd/giv
+          }
+
+          build_one linux amd64
+          build_one linux arm64
+          build_one darwin amd64
+          build_one darwin arm64
+          build_one windows amd64
+          build_one windows arm64
+
+          mk_tar() {
+            local goos=$1 goarch=$2 bin=$3
+            rm -rf tmp/*
+            cp "build/${bin}" tmp/giv
+            chmod +x tmp/giv 2>/dev/null || true
+            (cd tmp && tar -czf "../release/giv_${VERSION}_${goos}_${goarch}.tar.gz" giv)
+          }
+
+          mk_zip() {
+            local goos=$1 goarch=$2 bin=$3
+            rm -rf tmp/*
+            cp "build/${bin}" tmp/giv.exe
+            (cd tmp && zip -q -r "../release/giv_${VERSION}_${goos}_${goarch}.zip" giv.exe)
+          }
+
+          mk_tar linux amd64 giv-linux-amd64
+          mk_tar linux arm64 giv-linux-arm64
+          mk_tar darwin amd64 giv-darwin-amd64
+          mk_tar darwin arm64 giv-darwin-arm64
+          mk_zip windows amd64 giv-windows-amd64.exe
+          mk_zip windows arm64 giv-windows-arm64.exe
+
+          rm -rf build tmp
+          cd release && sha256sum *.tar.gz *.zip > SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/*.zip
+            release/SHA256SUMS
