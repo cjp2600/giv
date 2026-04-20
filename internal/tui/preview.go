@@ -117,9 +117,15 @@ func stripLeadingBOM(b []byte) []byte {
 func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, contentWidth int, showDeletions bool) string {
 	w := normWidth(contentWidth)
 	if cf.IsUntracked || (len(cf.PorcelainXY) > 0 && cf.PorcelainXY[0] == 'A') {
+		if gogit.IsBinaryPath(cf.Path) {
+			return metaStyle.Render("Binary file — content not shown.")
+		}
 		body, err := gogit.ReadWorktreeFile(repoRoot, cf.Path)
 		if err != nil {
 			return warnAccent.Render(fmt.Sprintf("read error: %v", err))
+		}
+		if gogit.IsBinaryContent(body) {
+			return metaStyle.Render("Binary file — content not shown.")
 		}
 		label := "Untracked file — showing full content"
 		if !cf.IsUntracked {
@@ -155,11 +161,17 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 		return warnAccent.Render(fmt.Sprintf("git diff: %v", err))
 	}
 	if strings.TrimSpace(diffText) == "" {
+		if gogit.IsBinaryPath(cf.Path) {
+			return metaStyle.Render("Binary file — content not shown.")
+		}
 		readOut := <-fileCh
 		if readOut.err != nil {
 			return metaStyle.Render("No diff; could not read file.")
 		}
 		body := stripLeadingBOM(readOut.body)
+		if gogit.IsBinaryContent(body) {
+			return metaStyle.Render("Binary file — content not shown.")
+		}
 		note := "No uncommitted changes vs HEAD — showing file from disk:\n\n"
 		if !gogit.HasHEAD(ctx, repoRoot) {
 			note = "Empty diff in repo without commits — showing file from disk:\n\n"
@@ -167,14 +179,17 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 		return metaStyle.Render(note) + renderFullContext(cf.Path, body, w)
 	}
 
+	if gitUnifiedDiffContainsBinaryNotice(diffText) || gogit.IsBinaryPath(cf.Path) {
+		return metaStyle.Render("Binary files differ — content not shown.")
+	}
 	readOut := <-fileCh
 	if readOut.err != nil {
 		return warnAccent.Render(fmt.Sprintf("read file: %v", readOut.err)) + "\n" + renderUnifiedDiff(cf.Path, diffText, w, showDeletions)
 	}
 	body := readOut.body
 	body = stripLeadingBOM(body)
-	if gitUnifiedDiffContainsBinaryNotice(diffText) {
-		return metaStyle.Render("Binary files differ — raw diff:\n\n") + renderUnifiedDiff(cf.Path, diffText, w, showDeletions)
+	if gogit.IsBinaryContent(body) {
+		return metaStyle.Render("Binary files differ — content not shown.")
 	}
 	hint := previewDiffHint(showDeletions)
 	overlay, ok := renderFullFileWithDiff(cf.Path, body, diffText, w, showDeletions)

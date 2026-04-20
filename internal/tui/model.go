@@ -1359,7 +1359,13 @@ func (m *Model) mainLayoutView() string {
 		}
 	}
 	logoBlock := " " + logoLetterG.Render("g") + logoLetterI.Render("i") + logoLetterV.Render("v")
-	rest := fmt.Sprintf(" ⎇ %s · %d · (%s)%s", branch, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+
+	branchDisplay := branch
+	if m.snap.AheadCount > 0 {
+		branchDisplay = branchDisplay + "*"
+	}
+
+	rest := fmt.Sprintf(" ⎇ %s · %d · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
 	statusLine := logoBlock + topBarMuted.Render(rest)
 	if ce := strings.TrimSpace(m.commitErr); ce != "" {
 		statusLine += topBarMuted.Render(" · " + ce)

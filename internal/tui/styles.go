@@ -57,15 +57,15 @@ var (
 	headerAccent = lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
 	warnAccent   = lipgloss.NewStyle().Foreground(lipgloss.Color("210"))
 
-	// giv logo: dark-to-light blue; Bold after Foreground is more reliable in terminals.
+	// giv logo: orange; Bold after Foreground is more reliable in terminals.
 	logoLetterG = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Dark: "#4586d8", Light: "#0ea5e9"}).
+			Foreground(lipgloss.AdaptiveColor{Dark: "#FF8C00", Light: "#E07000"}).
 			Bold(true)
 	logoLetterI = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Dark: "#7ab6f0", Light: "#38bdf8"}).
+			Foreground(lipgloss.AdaptiveColor{Dark: "#FF8C00", Light: "#E07000"}).
 			Bold(true)
 	logoLetterV = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Dark: "#b6e6ff", Light: "#7dd3fc"}).
+			Foreground(lipgloss.AdaptiveColor{Dark: "#FF8C00", Light: "#E07000"}).
 			Bold(true)
 	// Status bar text after the logo (single gray tone).
 	topBarMuted = lipgloss.NewStyle().

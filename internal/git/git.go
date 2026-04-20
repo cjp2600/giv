@@ -24,9 +24,10 @@ type ChangedFile struct {
 
 // Snapshot is refreshed periodically for the repo root.
 type Snapshot struct {
-	Branch string
-	Files  []ChangedFile
-	Error  string
+	Branch     string
+	Files      []ChangedFile
+	Error      string
+	AheadCount int // commits ahead of upstream (unpushed)
 }
 
 // RepoRoot returns absolute path of git work tree for dir (or dir itself if inside repo).
@@ -91,7 +92,21 @@ func SnapshotFromRepo(ctx context.Context, repoRoot string) Snapshot {
 		return Snapshot{Branch: branch, Error: err.Error()}
 	}
 	files := parsePorcelain(raw)
-	return Snapshot{Branch: branch, Files: files}
+	ahead := countAhead(ctx, repoRoot)
+	return Snapshot{Branch: branch, Files: files, AheadCount: ahead}
+}
+
+// countAhead returns the number of commits on the current branch that are
+// not yet pushed to the upstream tracking branch.  Returns 0 when there is
+// no upstream or on any error (safe default — no indicator shown).
+func countAhead(ctx context.Context, repoRoot string) int {
+	out, err := RunGit(ctx, repoRoot, "rev-list", "--count", "@{upstream}..HEAD")
+	if err != nil {
+		return 0
+	}
+	n := 0
+	fmt.Sscanf(strings.TrimSpace(out), "%d", &n)
+	return n
 }
 
 func parsePorcelain(raw string) []ChangedFile {
@@ -410,4 +425,109 @@ func ReadWorktreeFile(repoRoot, relPath string) ([]byte, error) {
 	}
 	full := filepath.Join(repoRoot, filepath.FromSlash(relPath))
 	return os.ReadFile(full)
+}
+
+// binarySniffSize is the number of bytes inspected for NUL to decide
+// whether a file is binary (same heuristic git uses).
+const binarySniffSize = 8000
+
+// knownBinaryExts lists extensions that are always treated as binary,
+// regardless of content.  Lowercase, with leading dot.
+var knownBinaryExts = map[string]bool{
+	// images
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+	".bmp": true, ".ico": true, ".webp": true, ".tiff": true,
+	".tif": true, ".svg": false, // SVG is text
+	// audio / video
+	".mp3": true, ".mp4": true, ".wav": true, ".ogg": true,
+	".flac": true, ".avi": true, ".mkv": true, ".mov": true,
+	".webm": true,
+	// archives
+	".zip": true, ".tar": true, ".gz": true, ".bz2": true,
+	".xz": true, ".zst": true, ".7z": true, ".rar": true,
+	// compiled / object
+	".o": true, ".a": true, ".so": true, ".dylib": true,
+	".dll": true, ".exe": true, ".class": true, ".pyc": true,
+	".pyo": true, ".wasm": true,
+	// documents
+	".pdf": true, ".doc": true, ".docx": true, ".xls": true,
+	".xlsx": true, ".ppt": true, ".pptx": true,
+	// fonts
+	".ttf": true, ".otf": true, ".woff": true, ".woff2": true,
+	".eot": true,
+	// databases
+	".db": true, ".sqlite": true, ".sqlite3": true,
+	// misc binary
+	".bin": true, ".dat": true, ".pak": true, ".DS_Store": true,
+}
+
+// IsBinaryPath returns true if the file extension is a well-known binary format.
+func IsBinaryPath(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		return false
+	}
+	return knownBinaryExts[ext]
+}
+
+// IsBinaryContent inspects the raw bytes and returns true when the data
+// looks like a binary blob rather than human-readable text.
+//
+// Detection layers (in order):
+//  1. NUL byte in the first 8 KB — the same heuristic git uses.
+//  2. Common binary magic signatures (ELF, Mach-O, PE, gzip, PK/zip, etc.).
+func IsBinaryContent(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	// 1. NUL scan (same as git: first 8000 bytes).
+	sniff := data
+	if len(sniff) > binarySniffSize {
+		sniff = sniff[:binarySniffSize]
+	}
+	if bytes.ContainsRune(sniff, 0) {
+		return true
+	}
+
+	// 2. Magic-number signatures for common binary formats.
+	if matchesBinaryMagic(data) {
+		return true
+	}
+
+	return false
+}
+
+// matchesBinaryMagic checks leading bytes against well-known signatures.
+func matchesBinaryMagic(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	// ELF
+	if data[0] == 0x7F && data[1] == 'E' && data[2] == 'L' && data[3] == 'F' {
+		return true
+	}
+	// Mach-O (32/64, big/little)
+	m := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	switch m {
+	case 0xFEEDFACE, 0xFEEDFACF, 0xCEFAEDFE, 0xCFFAEDFE, 0xCAFEBABE:
+		return true
+	}
+	// PE (MZ)
+	if data[0] == 'M' && data[1] == 'Z' {
+		return true
+	}
+	// gzip
+	if data[0] == 0x1F && data[1] == 0x8B {
+		return true
+	}
+	// PK (zip)
+	if data[0] == 'P' && data[1] == 'K' && data[2] == 0x03 && data[3] == 0x04 {
+		return true
+	}
+	// PDF (%PDF)
+	if data[0] == '%' && data[1] == 'P' && data[2] == 'D' && data[3] == 'F' {
+		return true
+	}
+	return false
 }
