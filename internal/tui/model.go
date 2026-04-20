@@ -104,6 +104,11 @@ type branchDoneMsg struct {
 	err error
 }
 
+// pushDoneMsg is the result of background git push.
+type pushDoneMsg struct {
+	err error
+}
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	repoRoot        string
@@ -142,6 +147,10 @@ type Model struct {
 	branchInput     textinput.Model
 	branchErr       string
 	branchCreating  bool
+
+	pushModalOpen bool
+	pushPushing   bool
+	pushErr       string
 }
 
 const previewCacheMaxEntries = 24
@@ -702,7 +711,7 @@ func (m *Model) gitPushCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		err := gogit.PushCurrentBranch(ctx, repo)
-		return fileGitOpDoneMsg{err: err}
+		return pushDoneMsg{err: err}
 	}
 }
 
@@ -794,6 +803,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.branchErr = ""
 		m.branchInput.SetValue("")
+		m.refreshGitState()
+		return m, m.previewCmd()
+
+	case pushDoneMsg:
+		m.pushPushing = false
+		if msg.err != nil {
+			m.pushErr = msg.err.Error()
+			return m, nil
+		}
+		m.pushErr = ""
+		m.pushModalOpen = false
 		m.refreshGitState()
 		return m, m.previewCmd()
 
@@ -904,6 +924,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, icmd
 		}
 
+		if m.pushModalOpen {
+			if m.pushPushing {
+				if msg.String() == "ctrl+c" {
+					return m, tea.Quit
+				}
+				return m, nil
+			}
+			switch msg.String() {
+			case "ctrl+c":
+				return m, tea.Quit
+			case "esc":
+				m.pushModalOpen = false
+				m.pushErr = ""
+				return m, nil
+			case "enter":
+				m.pushErr = ""
+				m.pushPushing = true
+				return m, m.gitPushCmd()
+			}
+			return m, nil
+		}
+
 		if m.focusLeft && (msg.String() == "enter" || msg.Type == tea.KeyEnter) {
 			if it, ok := m.list.SelectedItem().(rowItem); ok && it.kind == rowTreeDir {
 				m.toggleDirExpandedAndRefresh(it.dirPath)
@@ -913,8 +955,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "ctrl+p":
+			m.pushModalOpen = true
+			m.pushErr = ""
 			m.fileOpErr = ""
-			return m, m.gitPushCmd()
+			return m, nil
 		}
 
 		m.captureSelection()
@@ -1274,6 +1318,14 @@ func (m *Model) View() string {
 			w, h,
 			lipgloss.Center, lipgloss.Center,
 			m.branchModalView(),
+			lipgloss.WithWhitespaceBackground(lipgloss.Color("232")),
+		)
+	}
+	if m.pushModalOpen {
+		return lipgloss.Place(
+			w, h,
+			lipgloss.Center, lipgloss.Center,
+			m.pushModalView(),
 			lipgloss.WithWhitespaceBackground(lipgloss.Color("232")),
 		)
 	}

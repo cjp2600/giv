@@ -313,10 +313,46 @@ func RevertFileSelection(ctx context.Context, repoRoot string, cf ChangedFile) e
 	return RmCachedPath(ctx, repoRoot, cf.Path)
 }
 
-// PushCurrentBranch runs git push for the current branch (upstream from remote config).
+// RunGitLong is like RunGit but uses the caller's context timeout instead of 8s.
+func RunGitLong(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return out.String(), nil
+}
+
+// PushCurrentBranch runs git push for the current branch, setting upstream if needed.
 func PushCurrentBranch(ctx context.Context, repoRoot string) error {
-	_, err := RunGit(ctx, repoRoot, "push")
+	branch, err := BranchName(ctx, repoRoot)
+	if err != nil {
+		return fmt.Errorf("cannot determine branch: %w", err)
+	}
+	// Try normal push first.
+	_, err = RunGitLong(ctx, repoRoot, "push")
+	if err != nil {
+		// If no upstream, set it automatically.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "no upstream") || strings.Contains(errMsg, "has no upstream") ||
+			strings.Contains(errMsg, "set-upstream") {
+			_, err = RunGitLong(ctx, repoRoot, "push", "-u", "origin", branch)
+		}
+	}
 	return err
+}
+
+// LastCommitOneLiner returns a short one-line summary of the last commit (hash + subject).
+func LastCommitOneLiner(ctx context.Context, repoRoot string) string {
+	out, err := RunGit(ctx, repoRoot, "log", "-1", "--format=%h %s")
+	if err != nil {
+		return "(no commits)"
+	}
+	return strings.TrimSpace(out)
 }
 
 // CreateBranchFromMain fetches origin, checks out main (or master), pulls latest,
