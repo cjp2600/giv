@@ -386,6 +386,8 @@ func snapshotSignature(repoRoot string, s gogit.Snapshot) string {
 	var b strings.Builder
 	b.WriteString(s.Branch)
 	b.WriteByte('|')
+	fmt.Fprintf(&b, "%d", s.AheadCount)
+	b.WriteByte('|')
 	b.WriteString(s.Error)
 	for _, f := range s.Files {
 		b.WriteString(f.Path)
