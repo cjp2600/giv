@@ -199,6 +199,86 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 	return hint + overlay
 }
 
+// BuildReviewPreview builds preview for review mode: diff between merge-base and branch HEAD.
+func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, base, branch string, contentWidth int, showDeletions bool) string {
+	w := normWidth(contentWidth)
+
+	// Deleted file — show notice.
+	if len(cf.PorcelainXY) >= 1 && cf.PorcelainXY[0] == 'D' {
+		return metaStyle.Render("File deleted in this branch.")
+	}
+
+	// New file (added in branch) — show full content from branch ref.
+	if len(cf.PorcelainXY) >= 1 && cf.PorcelainXY[0] == 'A' {
+		if gogit.IsBinaryPath(cf.Path) {
+			return metaStyle.Render("Binary file — content not shown.")
+		}
+		body, err := gogit.ShowFileAtRef(ctx, repoRoot, branch, cf.Path)
+		if err != nil {
+			return warnAccent.Render(fmt.Sprintf("read error: %v", err))
+		}
+		if gogit.IsBinaryContent(body) {
+			return metaStyle.Render("Binary file — content not shown.")
+		}
+		note := metaStyle.Render("New file — showing full content")
+		return note + "\n\n" + renderFullContext(cf.Path, stripLeadingBOM(body), w)
+	}
+
+	// Modified file — get diff between base and branch, plus file content at branch HEAD.
+	type diffRes struct {
+		text string
+		err  error
+	}
+	type fileRes struct {
+		body []byte
+		err  error
+	}
+	diffCh := make(chan diffRes, 1)
+	fileCh := make(chan fileRes, 1)
+	go func() {
+		d, err := gogit.DiffBetweenRefs(ctx, repoRoot, base, branch, cf.Path)
+		diffCh <- diffRes{text: d, err: err}
+	}()
+	go func() {
+		b, err := gogit.ShowFileAtRef(ctx, repoRoot, branch, cf.Path)
+		fileCh <- fileRes{body: b, err: err}
+	}()
+
+	diffOut := <-diffCh
+	if diffOut.err != nil {
+		return warnAccent.Render(fmt.Sprintf("git diff: %v", diffOut.err))
+	}
+	if strings.TrimSpace(diffOut.text) == "" {
+		readOut := <-fileCh
+		if readOut.err != nil {
+			return metaStyle.Render("No diff available.")
+		}
+		body := stripLeadingBOM(readOut.body)
+		if gogit.IsBinaryContent(body) {
+			return metaStyle.Render("Binary file — content not shown.")
+		}
+		return metaStyle.Render("No changes detected.\n\n") + renderFullContext(cf.Path, body, w)
+	}
+
+	if gitUnifiedDiffContainsBinaryNotice(diffOut.text) || gogit.IsBinaryPath(cf.Path) {
+		return metaStyle.Render("Binary files differ — content not shown.")
+	}
+	readOut := <-fileCh
+	if readOut.err != nil {
+		return warnAccent.Render(fmt.Sprintf("read file: %v", readOut.err)) + "\n" + renderUnifiedDiff(cf.Path, diffOut.text, w, showDeletions)
+	}
+	body := stripLeadingBOM(readOut.body)
+	if gogit.IsBinaryContent(body) {
+		return metaStyle.Render("Binary files differ — content not shown.")
+	}
+	hint := previewDiffHint(showDeletions)
+	overlay, ok := renderFullFileWithDiff(cf.Path, body, diffOut.text, w, showDeletions)
+	if !ok {
+		return hint + renderUnifiedDiff(cf.Path, diffOut.text, w, showDeletions)
+	}
+	return hint + overlay
+}
+
 func renderAddedFile(name string, body []byte, width int) string {
 	lines := strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n")
 	if len(lines) > maxPreviewLines {

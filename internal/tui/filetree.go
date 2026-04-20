@@ -220,6 +220,9 @@ func (m *Model) pruneExpandedDirs(files []gogit.ChangedFile) {
 }
 
 func (m *Model) buildFileListItems() []list.Item {
+	if m.mode == ModeReview {
+		return m.buildReviewFileListItems()
+	}
 	var tracked, untracked []gogit.ChangedFile
 	for _, f := range m.snap.Files {
 		if f.IsUntracked {
@@ -240,6 +243,18 @@ func (m *Model) buildFileListItems() []list.Item {
 		out = append(out, rowItem{kind: rowUntrackedHeader})
 		out = m.appendTreeSection(out, buildFileTrie(untracked), "", nil, true)
 	}
+	return out
+}
+
+// buildReviewFileListItems builds the file list for review mode — single flat section.
+func (m *Model) buildReviewFileListItems() []list.Item {
+	files := m.snap.Files
+	if len(files) == 0 {
+		return nil
+	}
+	var out []list.Item
+	out = append(out, rowItem{kind: rowTrackedHeader, reviewMode: true})
+	out = m.appendTreeSection(out, buildFileTrie(files), "", nil, false)
 	return out
 }
 

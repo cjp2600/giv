@@ -19,6 +19,14 @@ import (
 	gogit "github.com/cjp2600/giv/internal/git"
 )
 
+// ViewMode selects how giv operates: working tree changes or branch review.
+type ViewMode int
+
+const (
+	ModeWorkingTree ViewMode = iota
+	ModeReview
+)
+
 // topMargin adds blank lines below the terminal tab/status strip.
 const topMargin = 2
 
@@ -51,6 +59,7 @@ type rowItem struct {
 	dirPath      string
 	dirExpanded  bool
 	dirUntracked bool
+	reviewMode   bool // true in review mode (changes header label)
 }
 
 func (r rowItem) Title() string {
@@ -109,6 +118,14 @@ type pushDoneMsg struct {
 	err error
 }
 
+// reviewInitDoneMsg carries the result of background review initialization (fetch + checkout + merge-base).
+type reviewInitDoneMsg struct {
+	err        error
+	base       string
+	files      []gogit.ChangedFile
+	branch     string
+}
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	repoRoot        string
@@ -119,6 +136,12 @@ type Model struct {
 	selectedPath    string
 	lastPreviewPath string
 	snapSig         string
+
+	// Review mode state.
+	mode           ViewMode
+	reviewBranch   string // branch being reviewed
+	reviewBase     string // merge-base commit hash
+	reviewFiles    []gogit.ChangedFile
 
 	previewSeq        uint64
 	previewCache      map[string]string
@@ -211,7 +234,11 @@ func (d itemDelegate) Render(w io.Writer, m list.Model, index int, li list.Item)
 	}
 	switch r.kind {
 	case rowTrackedHeader:
-		txt := sectionTitleStyle.Width(lw).Render(" In repository (changes) ")
+		label := " In repository (changes) "
+		if r.reviewMode {
+			label = " Branch changes "
+		}
+		txt := sectionTitleStyle.Width(lw).Render(label)
 		_, _ = fmt.Fprint(w, txt)
 	case rowDivider:
 		// Match panel border (styles.panelBorder) or light hyphens look like a streak.
@@ -434,8 +461,18 @@ func previewHeaderStatic(snap gogit.Snapshot, filePath string) string {
 	return line1 + "\n" + mutedPathStyle.Render(filePath)
 }
 
+// previewHeaderReview builds the preview header for review mode.
+func previewHeaderReview(branch, filePath string) string {
+	line1 := titleBarStyle.Render(headerAccent.Render("review ⎇ " + branch))
+	if filePath == "" {
+		return line1
+	}
+	return line1 + "\n" + mutedPathStyle.Render(filePath)
+}
+
 // New builds a model for repo root; default focus is the file tree.
-func New(repoRoot string, width, height int) *Model {
+// If reviewBranch is non-empty, starts in review mode.
+func New(repoRoot string, width, height int, reviewBranch ...string) *Model {
 	del := newItemDelegate()
 	del.Styles.NormalTitle = lipgloss.NewStyle()
 	del.Styles.SelectedTitle = lipgloss.NewStyle()
@@ -472,14 +509,62 @@ func New(repoRoot string, width, height int) *Model {
 		branchInput:  bi,
 		previewCache: make(map[string]string, previewCacheMaxEntries),
 	}
+	if len(reviewBranch) > 0 && reviewBranch[0] != "" {
+		m.mode = ModeReview
+		m.reviewBranch = reviewBranch[0]
+		m.snap = gogit.Snapshot{Branch: reviewBranch[0]}
+	}
 	m.applyWindowSize(width, height)
-	m.refreshGitState()
+	if m.mode != ModeReview {
+		m.refreshGitState()
+	}
 	return m
 }
 
 func (m *Model) Init() tea.Cmd {
+	if m.mode == ModeReview {
+		return tea.Batch(m.reviewInitCmd())
+	}
 	// Preview builds asynchronously — UI thread never blocks on chroma/git.
 	return tea.Batch(tickCmd(), m.previewCmd())
+}
+
+// reviewInitCmd fetches, checks out the branch, finds merge-base, and lists changed files.
+func (m *Model) reviewInitCmd() tea.Cmd {
+	repo := m.repoRoot
+	branch := m.reviewBranch
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+
+		// Fetch all remotes.
+		if err := gogit.FetchAll(ctx, repo); err != nil {
+			return reviewInitDoneMsg{err: fmt.Errorf("fetch: %w", err)}
+		}
+
+		// Checkout the review branch.
+		if err := gogit.CheckoutBranch(ctx, repo, branch); err != nil {
+			return reviewInitDoneMsg{err: fmt.Errorf("checkout %s: %w", branch, err)}
+		}
+
+		// Find merge-base against main/master.
+		base, _, err := gogit.FindBranchBase(ctx, repo, branch)
+		if err != nil {
+			return reviewInitDoneMsg{err: err}
+		}
+
+		// List changed files.
+		files, err := gogit.ChangedFilesBetweenRefs(ctx, repo, base, branch)
+		if err != nil {
+			return reviewInitDoneMsg{err: fmt.Errorf("diff files: %w", err)}
+		}
+
+		return reviewInitDoneMsg{
+			base:   base,
+			files:  files,
+			branch: branch,
+		}
+	}
 }
 
 func tickCmd() tea.Cmd {
@@ -748,6 +833,10 @@ func (m *Model) previewCmd() tea.Cmd {
 		}
 	}
 
+	mode := m.mode
+	reviewBase := m.reviewBase
+	reviewBranch := m.reviewBranch
+
 	return func() tea.Msg {
 		if len(snap.Files) == 0 {
 			return previewDoneMsg{seq: seq, path: path, isEmpty: true}
@@ -770,8 +859,18 @@ func (m *Model) previewCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		hdr := previewHeaderStatic(snap, cf.Path)
-		body := BuildPreview(ctx, repo, cf, m.vp.Width, m.previewShowDeletions)
+		var hdr string
+		if mode == ModeReview {
+			hdr = previewHeaderReview(reviewBranch, cf.Path)
+		} else {
+			hdr = previewHeaderStatic(snap, cf.Path)
+		}
+		var body string
+		if mode == ModeReview {
+			body = BuildReviewPreview(ctx, repo, cf, reviewBase, reviewBranch, m.vp.Width, m.previewShowDeletions)
+		} else {
+			body = BuildPreview(ctx, repo, cf, m.vp.Width, m.previewShowDeletions)
+		}
 		return previewDoneMsg{
 			seq:      seq,
 			path:     path,
@@ -783,6 +882,24 @@ func (m *Model) previewCmd() tea.Cmd {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case reviewInitDoneMsg:
+		if msg.err != nil {
+			m.vp.SetContent(warnAccent.Render(fmt.Sprintf("Review init error: %v", msg.err)))
+			return m, nil
+		}
+		m.reviewBase = msg.base
+		m.reviewFiles = msg.files
+		m.reviewBranch = msg.branch
+		m.snap = gogit.Snapshot{
+			Branch: msg.branch,
+			Files:  msg.files,
+		}
+		m.snapSig = fmt.Sprintf("review|%s|%s|%d", msg.branch, msg.base, len(msg.files))
+		items := m.buildFileListItems()
+		m.list.SetItems(items)
+		m.skipNonFileRows(0)
+		return m, m.previewCmd()
+
 	case commitDoneMsg:
 		m.commitModalOpen = false
 		m.commitInput.Blur()
@@ -860,6 +977,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(vcmd, m.previewCmd())
 
 	case tickMsg:
+		if m.mode == ModeReview {
+			return m, tickCmd()
+		}
 		var pcmd tea.Cmd
 		if m.refreshGitState() {
 			pcmd = m.previewCmd()
@@ -955,12 +1075,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		switch msg.String() {
-		case "ctrl+p":
-			m.pushModalOpen = true
-			m.pushErr = ""
-			m.fileOpErr = ""
-			return m, nil
+		if m.mode != ModeReview {
+			switch msg.String() {
+			case "ctrl+p":
+				m.pushModalOpen = true
+				m.pushErr = ""
+				m.fileOpErr = ""
+				return m, nil
+			}
 		}
 
 		m.captureSelection()
@@ -974,7 +1096,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.openEditorCmd(m.selectedPath)
 		}
 
-		if m.focusLeft {
+		if m.focusLeft && m.mode != ModeReview {
 			m.captureSelection()
 			if m.selectedPath != "" {
 				switch msg.String() {
@@ -1002,12 +1124,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			return m, tea.Quit
 		case "ctrl+g":
+			if m.mode == ModeReview {
+				return m, nil
+			}
 			m.commitModalOpen = true
 			m.commitErr = ""
 			m.fileOpErr = ""
 			m.commitInput.SetValue("")
 			return m, m.commitInput.Focus()
 		case "ctrl+b":
+			if m.mode == ModeReview {
+				return m, nil
+			}
 			m.branchModalOpen = true
 			m.branchErr = ""
 			m.fileOpErr = ""
@@ -1367,7 +1495,12 @@ func (m *Model) mainLayoutView() string {
 		branchDisplay = branchDisplay + "*"
 	}
 
-	rest := fmt.Sprintf(" ⎇ %s · %d · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+	var rest string
+	if m.mode == ModeReview {
+		rest = fmt.Sprintf(" review ⎇ %s · %d files · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+	} else {
+		rest = fmt.Sprintf(" ⎇ %s · %d · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+	}
 	statusLine := logoBlock + topBarMuted.Render(rest)
 	if ce := strings.TrimSpace(m.commitErr); ce != "" {
 		statusLine += topBarMuted.Render(" · " + ce)

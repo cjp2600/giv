@@ -12,7 +12,10 @@ import (
 	"github.com/cjp2600/giv/internal/tui"
 )
 
-var flagHotkey bool
+var (
+	flagHotkey bool
+	flagReview string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "giv",
@@ -35,7 +38,7 @@ syntax-highlighted preview / diff.`,
 		}
 
 		p := tea.NewProgram(
-			tui.New(root, 100, 30),
+			tui.New(root, 100, 30, flagReview),
 			tea.WithAltScreen(),
 			// AllMotion emits an event on every pixel move → extra full redraws and
 			// visible background artifacts in the preview (ANSI/BCE). CellMotion:
@@ -49,6 +52,7 @@ syntax-highlighted preview / diff.`,
 
 func init() {
 	rootCmd.Flags().BoolVar(&flagHotkey, "hotkey", false, "Print keyboard shortcuts and exit")
+	rootCmd.Flags().StringVar(&flagReview, "review", "", "Review changes from a branch (compared to main)")
 }
 
 func main() {

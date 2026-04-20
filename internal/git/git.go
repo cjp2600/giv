@@ -409,6 +409,109 @@ func CreateBranchFromMain(ctx context.Context, repoRoot, branchName string) erro
 	return nil
 }
 
+// FetchAll runs git fetch to update all remote-tracking branches.
+func FetchAll(ctx context.Context, repoRoot string) error {
+	_, err := RunGitLong(ctx, repoRoot, "fetch", "--all")
+	return err
+}
+
+// CheckoutBranch switches to the given branch.
+func CheckoutBranch(ctx context.Context, repoRoot, branch string) error {
+	_, err := RunGit(ctx, repoRoot, "checkout", branch)
+	return err
+}
+
+// MergeBase returns the best common ancestor between two refs.
+func MergeBase(ctx context.Context, repoRoot, ref1, ref2 string) (string, error) {
+	out, err := RunGit(ctx, repoRoot, "merge-base", ref1, ref2)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// FindBranchBase finds the merge-base of the given branch against main/master.
+// Returns the merge-base commit hash and the main branch name used.
+func FindBranchBase(ctx context.Context, repoRoot, branch string) (base string, mainBranch string, err error) {
+	// Try origin/main, then origin/master, then local main, then local master.
+	candidates := []string{"origin/main", "origin/master", "main", "master"}
+	for _, c := range candidates {
+		if _, verr := RunGit(ctx, repoRoot, "rev-parse", "--verify", c); verr != nil {
+			continue
+		}
+		mb, merr := MergeBase(ctx, repoRoot, c, branch)
+		if merr == nil && mb != "" {
+			return mb, c, nil
+		}
+	}
+	return "", "", fmt.Errorf("cannot find merge-base for branch %s against main/master", branch)
+}
+
+// ChangedFilesBetweenRefs returns the list of changed files between two refs.
+func ChangedFilesBetweenRefs(ctx context.Context, repoRoot, fromRef, toRef string) ([]ChangedFile, error) {
+	raw, err := RunGit(ctx, repoRoot, "diff", "--name-status", fromRef+"..."+toRef)
+	if err != nil {
+		return nil, err
+	}
+	return parseNameStatus(raw), nil
+}
+
+// parseNameStatus parses "git diff --name-status" output into ChangedFile list.
+func parseNameStatus(raw string) []ChangedFile {
+	lines := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+	var out []ChangedFile
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 {
+			// Try space-separated (some git versions)
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			parts = fields
+		}
+		status := parts[0]
+		path := parts[len(parts)-1] // for renames, take the new name
+		cf := ChangedFile{
+			Path:        path,
+			IsUntracked: false,
+			HasStaged:   false,
+		}
+		switch {
+		case strings.HasPrefix(status, "A"):
+			cf.PorcelainXY = "A "
+			cf.HasStaged = true // renders as "S" badge (green) for new files
+		case strings.HasPrefix(status, "D"):
+			cf.PorcelainXY = "D "
+		case strings.HasPrefix(status, "R"):
+			cf.PorcelainXY = "M "
+		default:
+			cf.PorcelainXY = "M "
+		}
+		out = append(out, cf)
+	}
+	return out
+}
+
+// DiffBetweenRefs returns unified diff for a specific file between two refs.
+func DiffBetweenRefs(ctx context.Context, repoRoot, fromRef, toRef, path string) (string, error) {
+	return RunGit(ctx, repoRoot, "diff", "-w", fromRef+"..."+toRef, "--", path)
+}
+
+// ShowFileAtRef reads file content at a specific git ref (commit/branch).
+func ShowFileAtRef(ctx context.Context, repoRoot, ref, path string) ([]byte, error) {
+	spec := ref + ":" + filepath.ToSlash(path)
+	out, err := RunGit(ctx, repoRoot, "show", spec)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(out), nil
+}
+
 // CommitWorkingTree runs git commit -a -m message (tracked paths only; git add new files first).
 func CommitWorkingTree(ctx context.Context, repoRoot, message string) error {
 	if strings.TrimSpace(message) == "" {
