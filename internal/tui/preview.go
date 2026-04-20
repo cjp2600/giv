@@ -274,10 +274,20 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 	}
 	hint := previewDiffHint(showDeletions)
 	overlay, ok := renderFullFileWithDiff(cf.Path, body, diffOut.text, w, showDeletions)
-	if !ok {
-		return hint + renderUnifiedDiff(cf.Path, diffOut.text, w, showDeletions)
+	if ok {
+		return hint + overlay
 	}
-	return hint + overlay
+
+	// Fallback: working tree might differ from committed version (smudge filters,
+	// line-ending normalization, etc.). Try the exact committed blob.
+	if gitBody, err := gogit.ShowFileAtRef(ctx, repoRoot, branch, cf.Path); err == nil {
+		gitBody = stripLeadingBOM(gitBody)
+		if overlay2, ok2 := renderFullFileWithDiff(cf.Path, gitBody, diffOut.text, w, showDeletions); ok2 {
+			return hint + overlay2
+		}
+	}
+
+	return hint + renderUnifiedDiff(cf.Path, diffOut.text, w, showDeletions)
 }
 
 func renderAddedFile(name string, body []byte, width int) string {

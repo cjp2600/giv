@@ -82,6 +82,16 @@ func parseUnifiedHunks(diff string) []diffHunk {
 	if cur != nil {
 		hunks = append(hunks, *cur)
 	}
+	// Trim trailing empty context ops from each hunk — artefact of
+	// splitting diff output on '\n' (the final newline produces a ghost
+	// empty-string element that gets treated as a context line).
+	for i := range hunks {
+		ops := hunks[i].ops
+		for len(ops) > 0 && ops[len(ops)-1].prefix == ' ' && ops[len(ops)-1].text == "" {
+			ops = ops[:len(ops)-1]
+		}
+		hunks[i].ops = ops
+	}
 	return hunks
 }
 
