@@ -114,17 +114,27 @@ func stripLeadingBOM(b []byte) []byte {
 }
 
 // showDeletions: when false, omit removed-line text (working tree + green additions only).
+// isBinaryFile returns true only when the path is NOT a known text extension
+// AND fails the binary heuristic. Known source files (.go, .proto, .ts, …)
+// are never treated as binary even if gitattributes says -diff.
+func isBinaryFile(path string, body []byte) bool {
+	if gogit.IsKnownTextPath(path) {
+		return false
+	}
+	return gogit.IsBinaryPath(path) || gogit.IsBinaryContent(body)
+}
+
 func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, contentWidth int, showDeletions bool) string {
 	w := normWidth(contentWidth)
 	if cf.IsUntracked || (len(cf.PorcelainXY) > 0 && cf.PorcelainXY[0] == 'A') {
-		if gogit.IsBinaryPath(cf.Path) {
+		if !gogit.IsKnownTextPath(cf.Path) && gogit.IsBinaryPath(cf.Path) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		body, err := gogit.ReadWorktreeFile(repoRoot, cf.Path)
 		if err != nil {
 			return warnAccent.Render(fmt.Sprintf("read error: %v", err))
 		}
-		if gogit.IsBinaryContent(body) {
+		if isBinaryFile(cf.Path, body) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		label := "Untracked file — showing full content"
@@ -161,7 +171,7 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 		return warnAccent.Render(fmt.Sprintf("git diff: %v", err))
 	}
 	if strings.TrimSpace(diffText) == "" {
-		if gogit.IsBinaryPath(cf.Path) {
+		if !gogit.IsKnownTextPath(cf.Path) && gogit.IsBinaryPath(cf.Path) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		readOut := <-fileCh
@@ -169,7 +179,7 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 			return metaStyle.Render("No diff; could not read file.")
 		}
 		body := stripLeadingBOM(readOut.body)
-		if gogit.IsBinaryContent(body) {
+		if isBinaryFile(cf.Path, body) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		note := "No uncommitted changes vs HEAD — showing file from disk:\n\n"
@@ -179,7 +189,7 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 		return metaStyle.Render(note) + renderFullContext(cf.Path, body, w)
 	}
 
-	if gitUnifiedDiffContainsBinaryNotice(diffText) || gogit.IsBinaryPath(cf.Path) {
+	if !gogit.IsKnownTextPath(cf.Path) && (gitUnifiedDiffContainsBinaryNotice(diffText) || gogit.IsBinaryPath(cf.Path)) {
 		return metaStyle.Render("Binary files differ — content not shown.")
 	}
 	readOut := <-fileCh
@@ -188,7 +198,7 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 	}
 	body := readOut.body
 	body = stripLeadingBOM(body)
-	if gogit.IsBinaryContent(body) {
+	if isBinaryFile(cf.Path, body) {
 		return metaStyle.Render("Binary files differ — content not shown.")
 	}
 	hint := previewDiffHint(showDeletions)
@@ -209,16 +219,16 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 		return metaStyle.Render("File deleted in this branch.")
 	}
 
-	// New file (added in branch) ��� show full content from working tree.
+	// New file (added in branch) — show full content from working tree.
 	if len(cf.PorcelainXY) >= 1 && cf.PorcelainXY[0] == 'A' {
-		if gogit.IsBinaryPath(cf.Path) {
+		if !gogit.IsKnownTextPath(cf.Path) && gogit.IsBinaryPath(cf.Path) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		body, err := gogit.ReadWorktreeFile(repoRoot, cf.Path)
 		if err != nil {
 			return warnAccent.Render(fmt.Sprintf("read error: %v", err))
 		}
-		if gogit.IsBinaryContent(body) {
+		if isBinaryFile(cf.Path, body) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		note := metaStyle.Render("New file — showing full content")
@@ -255,13 +265,13 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 			return metaStyle.Render("No diff available.")
 		}
 		body := stripLeadingBOM(readOut.body)
-		if gogit.IsBinaryContent(body) {
+		if isBinaryFile(cf.Path, body) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
 		return metaStyle.Render("No changes detected.\n\n") + renderFullContext(cf.Path, body, w)
 	}
 
-	if gitUnifiedDiffContainsBinaryNotice(diffOut.text) || gogit.IsBinaryPath(cf.Path) {
+	if !gogit.IsKnownTextPath(cf.Path) && (gitUnifiedDiffContainsBinaryNotice(diffOut.text) || gogit.IsBinaryPath(cf.Path)) {
 		return metaStyle.Render("Binary files differ — content not shown.")
 	}
 	readOut := <-fileCh
@@ -269,7 +279,7 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 		return warnAccent.Render(fmt.Sprintf("read file: %v", readOut.err)) + "\n" + renderUnifiedDiff(cf.Path, diffOut.text, w, showDeletions)
 	}
 	body := stripLeadingBOM(readOut.body)
-	if gogit.IsBinaryContent(body) {
+	if isBinaryFile(cf.Path, body) {
 		return metaStyle.Render("Binary files differ — content not shown.")
 	}
 	hint := previewDiffHint(showDeletions)

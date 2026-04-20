@@ -209,20 +209,35 @@ func HasHEAD(ctx context.Context, repoRoot string) bool {
 	return err == nil
 }
 
+// diffArgs returns extra flags for git diff: --text when the path is a known
+// source file (overrides gitattributes -diff that marks generated code as binary).
+func diffTextFlag(path string) []string {
+	if IsKnownTextPath(path) {
+		return []string{"--text"}
+	}
+	return nil
+}
+
 // DiffAgainstHEAD returns unified diff for path vs HEAD (needs at least one commit).
 // Uses -w to hide whitespace-only noise from IDE formatting.
 func DiffAgainstHEAD(ctx context.Context, repoRoot, path string) (string, error) {
-	return RunGit(ctx, repoRoot, "diff", "-w", "HEAD", "--", path)
+	args := append([]string{"diff", "-w"}, diffTextFlag(path)...)
+	args = append(args, "HEAD", "--", path)
+	return RunGit(ctx, repoRoot, args...)
 }
 
 // DiffCached returns staged changes (index), used when there is no HEAD yet.
 func DiffCached(ctx context.Context, repoRoot, path string) (string, error) {
-	return RunGit(ctx, repoRoot, "diff", "-w", "--cached", "--", path)
+	args := append([]string{"diff", "-w"}, diffTextFlag(path)...)
+	args = append(args, "--cached", "--", path)
+	return RunGit(ctx, repoRoot, args...)
 }
 
 // DiffWorktree returns unstaged changes: working tree vs index.
 func DiffWorktree(ctx context.Context, repoRoot, path string) (string, error) {
-	return RunGit(ctx, repoRoot, "diff", "-w", "--", path)
+	args := append([]string{"diff", "-w"}, diffTextFlag(path)...)
+	args = append(args, "--", path)
+	return RunGit(ctx, repoRoot, args...)
 }
 
 // DiffForPreview returns unified diff text for the preview pane.
@@ -499,7 +514,9 @@ func parseNameStatus(raw string) []ChangedFile {
 
 // DiffBetweenRefs returns unified diff for a specific file between two refs.
 func DiffBetweenRefs(ctx context.Context, repoRoot, fromRef, toRef, path string) (string, error) {
-	return RunGit(ctx, repoRoot, "diff", "-w", fromRef, toRef, "--", path)
+	args := append([]string{"diff", "-w"}, diffTextFlag(path)...)
+	args = append(args, fromRef, toRef, "--", path)
+	return RunGit(ctx, repoRoot, args...)
 }
 
 // ShowFileAtRef reads file content at a specific git ref (commit/branch).
@@ -562,6 +579,62 @@ var knownBinaryExts = map[string]bool{
 	".db": true, ".sqlite": true, ".sqlite3": true,
 	// misc binary
 	".bin": true, ".dat": true, ".pak": true, ".DS_Store": true,
+}
+
+// knownTextExts lists extensions that are always treated as text,
+// overriding gitattributes -diff or binary detection heuristics.
+var knownTextExts = map[string]bool{
+	// Go
+	".go": true,
+	// Proto
+	".proto": true,
+	// Web
+	".js": true, ".jsx": true, ".ts": true, ".tsx": true,
+	".mjs": true, ".cjs": true, ".mts": true, ".cts": true,
+	".vue": true, ".svelte": true,
+	".html": true, ".htm": true, ".css": true, ".scss": true,
+	".less": true, ".sass": true,
+	// Config / data
+	".json": true, ".yaml": true, ".yml": true, ".toml": true,
+	".xml": true, ".csv": true, ".tsv": true, ".env": true,
+	".ini": true, ".cfg": true, ".conf": true,
+	// Scripting
+	".py": true, ".rb": true, ".pl": true, ".pm": true,
+	".sh": true, ".bash": true, ".zsh": true, ".fish": true,
+	".lua": true, ".php": true, ".r": true,
+	// Systems
+	".c": true, ".h": true, ".cpp": true, ".hpp": true,
+	".cc": true, ".hh": true, ".cxx": true, ".hxx": true,
+	".m": true, ".mm": true, ".swift": true,
+	".rs": true, ".zig": true, ".nim": true,
+	// JVM
+	".java": true, ".kt": true, ".kts": true, ".scala": true,
+	".groovy": true, ".gradle": true, ".clj": true,
+	// .NET
+	".cs": true, ".fs": true, ".vb": true, ".csproj": true,
+	// Markup / docs
+	".md": true, ".rst": true, ".txt": true, ".tex": true,
+	".adoc": true, ".org": true,
+	// Build / CI
+	".make": true, ".cmake": true, ".dockerfile": true,
+	".tf": true, ".hcl": true, ".nix": true,
+	// SQL
+	".sql": true,
+	// Other
+	".graphql": true, ".gql": true, ".thrift": true,
+	".avsc": true, ".fbs": true,
+	".dart": true, ".elm": true, ".ex": true, ".exs": true,
+	".erl": true, ".hrl": true, ".hs": true,
+}
+
+// IsKnownTextPath returns true if the file extension is a well-known source / text format.
+// Such files are always diffed as text regardless of gitattributes.
+func IsKnownTextPath(name string) bool {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		return false
+	}
+	return knownTextExts[ext]
 }
 
 // IsBinaryPath returns true if the file extension is a well-known binary format.
