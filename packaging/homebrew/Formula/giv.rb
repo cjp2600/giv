@@ -5,8 +5,8 @@
 class Giv < Formula
   desc "Terminal UI for reviewing git changes with a file tree and syntax-highlighted preview"
   homepage "https://github.com/cjp2600/giv"
-  url "https://github.com/cjp2600/giv/archive/refs/tags/v1.0.6.tar.gz"
-  sha256 "0f31345427c9ec1aa0af95ed024bb21111483c27924452eb0c58769c6b9f4385"
+  url "https://github.com/cjp2600/giv/archive/refs/tags/v1.0.7.tar.gz"
+  sha256 "92e295eae5d05f9e30b2fca52e7fef10efd7afe0c2e46ee60f7475d50db18cc7"
   license "MIT"
   head "https://github.com/cjp2600/giv.git", branch: "main"
 
