@@ -200,6 +200,7 @@ func BuildPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, co
 }
 
 // BuildReviewPreview builds preview for review mode: diff between merge-base and branch HEAD.
+// Since we already checked out the branch, reads file from working tree (same as normal mode).
 func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, base, branch string, contentWidth int, showDeletions bool) string {
 	w := normWidth(contentWidth)
 
@@ -208,12 +209,12 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 		return metaStyle.Render("File deleted in this branch.")
 	}
 
-	// New file (added in branch) — show full content from branch ref.
+	// New file (added in branch) ��� show full content from working tree.
 	if len(cf.PorcelainXY) >= 1 && cf.PorcelainXY[0] == 'A' {
 		if gogit.IsBinaryPath(cf.Path) {
 			return metaStyle.Render("Binary file — content not shown.")
 		}
-		body, err := gogit.ShowFileAtRef(ctx, repoRoot, branch, cf.Path)
+		body, err := gogit.ReadWorktreeFile(repoRoot, cf.Path)
 		if err != nil {
 			return warnAccent.Render(fmt.Sprintf("read error: %v", err))
 		}
@@ -224,7 +225,7 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 		return note + "\n\n" + renderFullContext(cf.Path, stripLeadingBOM(body), w)
 	}
 
-	// Modified file — get diff between base and branch, plus file content at branch HEAD.
+	// Modified file — get diff between base and branch HEAD, plus file from working tree.
 	type diffRes struct {
 		text string
 		err  error
@@ -240,7 +241,7 @@ func BuildReviewPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFi
 		diffCh <- diffRes{text: d, err: err}
 	}()
 	go func() {
-		b, err := gogit.ShowFileAtRef(ctx, repoRoot, branch, cf.Path)
+		b, err := gogit.ReadWorktreeFile(repoRoot, cf.Path)
 		fileCh <- fileRes{body: b, err: err}
 	}()
 

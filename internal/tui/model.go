@@ -31,6 +31,7 @@ const (
 const topMargin = 2
 
 type tickMsg time.Time
+type spinnerTickMsg time.Time
 
 // rowKind classifies left-pane rows: section headers, divider, file, or tree folder.
 type rowKind uint8
@@ -126,6 +127,7 @@ type reviewInitDoneMsg struct {
 	branch     string
 }
 
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	repoRoot        string
@@ -138,10 +140,13 @@ type Model struct {
 	snapSig         string
 
 	// Review mode state.
-	mode           ViewMode
-	reviewBranch   string // branch being reviewed
-	reviewBase     string // merge-base commit hash
-	reviewFiles    []gogit.ChangedFile
+	mode            ViewMode
+	reviewBranch    string // branch being reviewed
+	reviewBase      string // merge-base commit hash
+	reviewFiles     []gogit.ChangedFile
+	reviewLoading   bool   // true while fetch/checkout/merge-base in progress
+	reviewLoadingStep string // current step label for loader
+	reviewSpinFrame int    // animation frame counter
 
 	previewSeq        uint64
 	previewCache      map[string]string
@@ -463,7 +468,7 @@ func previewHeaderStatic(snap gogit.Snapshot, filePath string) string {
 
 // previewHeaderReview builds the preview header for review mode.
 func previewHeaderReview(branch, filePath string) string {
-	line1 := titleBarStyle.Render(headerAccent.Render("review ⎇ " + branch))
+	line1 := titleBarStyle.Render(headerAccent.Render("review") + " " + headerAccent.Render("⎇ "+branch))
 	if filePath == "" {
 		return line1
 	}
@@ -512,6 +517,8 @@ func New(repoRoot string, width, height int, reviewBranch ...string) *Model {
 	if len(reviewBranch) > 0 && reviewBranch[0] != "" {
 		m.mode = ModeReview
 		m.reviewBranch = reviewBranch[0]
+		m.reviewLoading = true
+		m.reviewLoadingStep = "Fetching…"
 		m.snap = gogit.Snapshot{Branch: reviewBranch[0]}
 	}
 	m.applyWindowSize(width, height)
@@ -521,39 +528,59 @@ func New(repoRoot string, width, height int, reviewBranch ...string) *Model {
 	return m
 }
 
+func spinnerTickCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg {
+		return spinnerTickMsg(t)
+	})
+}
+
 func (m *Model) Init() tea.Cmd {
 	if m.mode == ModeReview {
-		return tea.Batch(m.reviewInitCmd())
+		return tea.Batch(m.reviewFetchCmd(), spinnerTickCmd())
 	}
 	// Preview builds asynchronously — UI thread never blocks on chroma/git.
 	return tea.Batch(tickCmd(), m.previewCmd())
 }
 
-// reviewInitCmd fetches, checks out the branch, finds merge-base, and lists changed files.
-func (m *Model) reviewInitCmd() tea.Cmd {
+// reviewFetchDoneMsg signals that git fetch completed; triggers checkout step.
+type reviewFetchDoneMsg struct{ err error }
+
+// reviewCheckoutDoneMsg signals checkout completed; triggers merge-base + diff.
+type reviewCheckoutDoneMsg struct{ err error }
+
+func (m *Model) reviewFetchCmd() tea.Cmd {
+	repo := m.repoRoot
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := gogit.FetchAll(ctx, repo)
+		return reviewFetchDoneMsg{err: err}
+	}
+}
+
+func (m *Model) reviewCheckoutCmd() tea.Cmd {
+	repo := m.repoRoot
+	branch := m.reviewBranch
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := gogit.CheckoutBranch(ctx, repo, branch)
+		return reviewCheckoutDoneMsg{err: err}
+	}
+}
+
+func (m *Model) reviewDiffCmd() tea.Cmd {
 	repo := m.repoRoot
 	branch := m.reviewBranch
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
-		// Fetch all remotes.
-		if err := gogit.FetchAll(ctx, repo); err != nil {
-			return reviewInitDoneMsg{err: fmt.Errorf("fetch: %w", err)}
-		}
-
-		// Checkout the review branch.
-		if err := gogit.CheckoutBranch(ctx, repo, branch); err != nil {
-			return reviewInitDoneMsg{err: fmt.Errorf("checkout %s: %w", branch, err)}
-		}
-
-		// Find merge-base against main/master.
 		base, _, err := gogit.FindBranchBase(ctx, repo, branch)
 		if err != nil {
 			return reviewInitDoneMsg{err: err}
 		}
 
-		// List changed files.
 		files, err := gogit.ChangedFilesBetweenRefs(ctx, repo, base, branch)
 		if err != nil {
 			return reviewInitDoneMsg{err: fmt.Errorf("diff files: %w", err)}
@@ -882,7 +909,33 @@ func (m *Model) previewCmd() tea.Cmd {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinnerTickMsg:
+		if !m.reviewLoading {
+			return m, nil
+		}
+		m.reviewSpinFrame++
+		return m, spinnerTickCmd()
+
+	case reviewFetchDoneMsg:
+		if msg.err != nil {
+			m.reviewLoading = false
+			m.vp.SetContent(warnAccent.Render(fmt.Sprintf("Fetch error: %v", msg.err)))
+			return m, nil
+		}
+		m.reviewLoadingStep = "Checking out " + m.reviewBranch + "…"
+		return m, m.reviewCheckoutCmd()
+
+	case reviewCheckoutDoneMsg:
+		if msg.err != nil {
+			m.reviewLoading = false
+			m.vp.SetContent(warnAccent.Render(fmt.Sprintf("Checkout error: %v", msg.err)))
+			return m, nil
+		}
+		m.reviewLoadingStep = "Comparing with main…"
+		return m, m.reviewDiffCmd()
+
 	case reviewInitDoneMsg:
+		m.reviewLoading = false
 		if msg.err != nil {
 			m.vp.SetContent(warnAccent.Render(fmt.Sprintf("Review init error: %v", msg.err)))
 			return m, nil
@@ -987,6 +1040,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(tickCmd(), pcmd)
 
 	case tea.KeyMsg:
+		// Allow quit during review loading.
+		if m.reviewLoading {
+			switch msg.String() {
+			case "ctrl+c", "q", "esc":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
 		if m.commitModalOpen {
 			switch msg.String() {
 			case "ctrl+c":
@@ -1426,6 +1488,33 @@ func wrapPreview(s string, maxW int) string {
 	return s
 }
 
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+func (m *Model) reviewLoadingView() string {
+	w := m.termWidth
+	h := m.termH
+	if w <= 0 {
+		w = 80
+	}
+	if h <= 0 {
+		h = 24
+	}
+
+	frame := spinnerFrames[m.reviewSpinFrame%len(spinnerFrames)]
+	spinner := headerAccent.Render(frame)
+	label := m.reviewLoadingStep
+	if label == "" {
+		label = "Loading…"
+	}
+
+	logoBlock := logoLetterG.Render("g") + logoLetterI.Render("i") + logoLetterV.Render("v")
+	line1 := logoBlock + "  " + headerAccent.Render("review") + topBarMuted.Render(" ⎇ "+m.reviewBranch)
+	line2 := spinner + " " + metaStyle.Render(label)
+
+	content := lipgloss.JoinVertical(lipgloss.Center, line1, "", line2)
+	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, content)
+}
+
 func (m *Model) View() string {
 	w := m.termWidth
 	h := m.termH
@@ -1434,6 +1523,9 @@ func (m *Model) View() string {
 	}
 	if h <= 0 {
 		h = 24
+	}
+	if m.reviewLoading {
+		return m.reviewLoadingView()
 	}
 	if m.commitModalOpen {
 		return lipgloss.Place(
@@ -1495,13 +1587,13 @@ func (m *Model) mainLayoutView() string {
 		branchDisplay = branchDisplay + "*"
 	}
 
-	var rest string
+	var statusLine string
 	if m.mode == ModeReview {
-		rest = fmt.Sprintf(" review ⎇ %s · %d files · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+		statusLine = logoBlock + " " + headerAccent.Render("review") + topBarMuted.Render(fmt.Sprintf(" ⎇ %s · %d files · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint))
 	} else {
-		rest = fmt.Sprintf(" ⎇ %s · %d · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+		rest := fmt.Sprintf(" ⎇ %s · %d · (%s)%s", branchDisplay, len(m.snap.Files), m.previewStatusPlain(), diffHint)
+		statusLine = logoBlock + topBarMuted.Render(rest)
 	}
-	statusLine := logoBlock + topBarMuted.Render(rest)
 	if ce := strings.TrimSpace(m.commitErr); ce != "" {
 		statusLine += topBarMuted.Render(" · " + ce)
 	}

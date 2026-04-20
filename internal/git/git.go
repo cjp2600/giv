@@ -449,7 +449,7 @@ func FindBranchBase(ctx context.Context, repoRoot, branch string) (base string, 
 
 // ChangedFilesBetweenRefs returns the list of changed files between two refs.
 func ChangedFilesBetweenRefs(ctx context.Context, repoRoot, fromRef, toRef string) ([]ChangedFile, error) {
-	raw, err := RunGit(ctx, repoRoot, "diff", "--name-status", fromRef+"..."+toRef)
+	raw, err := RunGit(ctx, repoRoot, "diff", "--name-status", fromRef, toRef)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +499,7 @@ func parseNameStatus(raw string) []ChangedFile {
 
 // DiffBetweenRefs returns unified diff for a specific file between two refs.
 func DiffBetweenRefs(ctx context.Context, repoRoot, fromRef, toRef, path string) (string, error) {
-	return RunGit(ctx, repoRoot, "diff", "-w", fromRef+"..."+toRef, "--", path)
+	return RunGit(ctx, repoRoot, "diff", "-w", fromRef, toRef, "--", path)
 }
 
 // ShowFileAtRef reads file content at a specific git ref (commit/branch).
