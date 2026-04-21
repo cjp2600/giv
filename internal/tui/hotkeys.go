@@ -47,6 +47,7 @@ func PrintHotkeyHelp(w io.Writer) {
 	printRow("Ctrl+C", "Quit (also exits when the commit modal is open)")
 	printRow("Ctrl+N", "Jump to next changed line in preview (wraps from bottom to top)")
 	printRow("d", "Preview mode: working tree only / full diff including deletions")
+	printRow("m", "Toggle rendered Markdown preview (for .md files)")
 
 	printSection("Files & Git")
 	printRow("Ctrl+P", "git push current branch")

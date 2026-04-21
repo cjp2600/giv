@@ -155,6 +155,9 @@ type Model struct {
 	// previewShowDeletions: full unified diff with red deletions; else working tree / additions only.
 	previewShowDeletions bool
 
+	// mdRendered: when true and selected file is .md, show rendered Markdown instead of source.
+	mdRendered bool
+
 	// previewJumpLines — viewport line indices with diff highlight; used by Ctrl+N.
 	previewJumpLines []int
 
@@ -183,8 +186,8 @@ type Model struct {
 
 const previewCacheMaxEntries = 24
 
-func previewCacheKey(path string, width int, snapSig string, showDeletions bool) string {
-	return fmt.Sprintf("%s|%d|%s|%v", path, width, snapSig, showDeletions)
+func previewCacheKey(path string, width int, snapSig string, showDeletions bool, mdRendered bool) string {
+	return fmt.Sprintf("%s|%d|%s|%v|md%v", path, width, snapSig, showDeletions, mdRendered)
 }
 
 func (m *Model) getPreviewCache(key string) (string, bool) {
@@ -847,7 +850,7 @@ func (m *Model) previewCmd() tea.Cmd {
 	path := m.selectedPath
 	snap := m.snap
 	repo := m.repoRoot
-	cacheKey := previewCacheKey(path, m.vp.Width, m.snapSig, m.previewShowDeletions)
+	cacheKey := previewCacheKey(path, m.vp.Width, m.snapSig, m.previewShowDeletions, m.mdRendered)
 
 	if cached, ok := m.getPreviewCache(cacheKey); ok {
 		return func() tea.Msg {
@@ -863,6 +866,7 @@ func (m *Model) previewCmd() tea.Cmd {
 	mode := m.mode
 	reviewBase := m.reviewBase
 	reviewBranch := m.reviewBranch
+	mdRendered := m.mdRendered
 
 	return func() tea.Msg {
 		if len(snap.Files) == 0 {
@@ -875,7 +879,7 @@ func (m *Model) previewCmd() tea.Cmd {
 				seq:      seq,
 				path:     "",
 				content:  hdr + "\n\n" + body,
-				cacheKey: previewCacheKey("", m.vp.Width, m.snapSig, m.previewShowDeletions),
+				cacheKey: previewCacheKey("", m.vp.Width, m.snapSig, m.previewShowDeletions, false),
 			}
 		}
 		cf, ok := changedFileByPath(snap, path)
@@ -892,6 +896,18 @@ func (m *Model) previewCmd() tea.Cmd {
 		} else {
 			hdr = previewHeaderStatic(snap, cf.Path)
 		}
+
+		// Rendered Markdown mode: show glamour-rendered content instead of diff.
+		if mdRendered && isMarkdownFile(path) {
+			body := renderMarkdownPreview(ctx, repo, cf, mode, reviewBranch, m.vp.Width)
+			return previewDoneMsg{
+				seq:      seq,
+				path:     path,
+				content:  hdr + "\n" + body,
+				cacheKey: cacheKey,
+			}
+		}
+
 		var body string
 		if mode == ModeReview {
 			body = BuildReviewPreview(ctx, repo, cf, reviewBase, reviewBranch, m.vp.Width, m.previewShowDeletions)
@@ -1209,6 +1225,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d":
 			m.previewShowDeletions = !m.previewShowDeletions
 			return m, m.previewCmd()
+		case "m":
+			if isMarkdownFile(m.selectedPath) {
+				m.mdRendered = !m.mdRendered
+				return m, m.previewCmd()
+			}
 		}
 
 		// Jump between changed lines in preview — Ctrl+N (either focus).
@@ -1574,7 +1595,9 @@ func (m *Model) mainLayoutView() string {
 	}
 	diffHint := ""
 	if len(m.snap.Files) > 0 {
-		if m.previewShowDeletions {
+		if m.mdRendered && isMarkdownFile(m.selectedPath) {
+			diffHint = " · markdown"
+		} else if m.previewShowDeletions {
 			diffHint = " · preview ±"
 		} else {
 			diffHint = " · preview +"

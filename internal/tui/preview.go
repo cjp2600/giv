@@ -13,6 +13,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/x/ansi"
 	gogit "github.com/cjp2600/giv/internal/git"
 )
@@ -650,4 +651,43 @@ func highlightLine(filename, line string) (string, error) {
 	var b strings.Builder
 	appendDraculaTokensNoReset(&b, filename, line)
 	return b.String(), nil
+}
+
+// isMarkdownFile returns true for .md and .markdown extensions.
+func isMarkdownFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".md" || ext == ".markdown" || ext == ".mdown" || ext == ".mkd"
+}
+
+// renderMarkdownPreview reads the file content and renders it with glamour.
+func renderMarkdownPreview(ctx context.Context, repoRoot string, cf gogit.ChangedFile, mode ViewMode, reviewBranch string, contentWidth int) string {
+	var raw []byte
+	var err error
+	if mode == ModeReview {
+		raw, err = gogit.ShowFileAtRef(ctx, repoRoot, reviewBranch, cf.Path)
+	} else {
+		raw, err = gogit.ReadWorktreeFile(repoRoot, cf.Path)
+	}
+	if err != nil {
+		return metaStyle.Render(fmt.Sprintf("Error reading file: %v", err))
+	}
+
+	w := normWidth(contentWidth)
+	if w < 20 {
+		w = 80
+	}
+
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dracula"),
+		glamour.WithWordWrap(w),
+	)
+	if err != nil {
+		return metaStyle.Render(fmt.Sprintf("Markdown render error: %v", err))
+	}
+
+	rendered, err := renderer.Render(string(raw))
+	if err != nil {
+		return metaStyle.Render(fmt.Sprintf("Markdown render error: %v", err))
+	}
+	return rendered
 }
