@@ -4,6 +4,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -109,6 +110,73 @@ func countAhead(ctx context.Context, repoRoot string) int {
 	return n
 }
 
+// unquoteGitPath decodes C-style quoted paths that git produces for
+// filenames containing non-ASCII bytes.  Git wraps such names in double
+// quotes and escapes each non-ASCII byte as \xNN (hex) or uses standard
+// C escapes (\n, \t, \\, \").  If the path is not quoted it is returned
+// unchanged.
+func unquoteGitPath(s string) string {
+	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+		return s
+	}
+	inner := s[1 : len(s)-1]
+	var buf []byte
+	for i := 0; i < len(inner); i++ {
+		if inner[i] != '\\' {
+			buf = append(buf, inner[i])
+			continue
+		}
+		i++ // skip backslash
+		if i >= len(inner) {
+			buf = append(buf, '\\')
+			break
+		}
+		switch inner[i] {
+		case '\\':
+			buf = append(buf, '\\')
+		case '"':
+			buf = append(buf, '"')
+		case 'n':
+			buf = append(buf, '\n')
+		case 't':
+			buf = append(buf, '\t')
+		case 'r':
+			buf = append(buf, '\r')
+		case 'a':
+			buf = append(buf, '\a')
+		case 'b':
+			buf = append(buf, '\b')
+		case 'f':
+			buf = append(buf, '\f')
+		case 'v':
+			buf = append(buf, '\v')
+		case 'x':
+			if i+2 < len(inner) {
+				b, err := hex.DecodeString(inner[i+1 : i+3])
+				if err == nil {
+					buf = append(buf, b[0])
+					i += 2
+					continue
+				}
+			}
+			buf = append(buf, '\\', inner[i])
+		default:
+			// Octal: \NNN
+			if inner[i] >= '0' && inner[i] <= '7' {
+				val := int(inner[i] - '0')
+				for j := 0; j < 2 && i+1 < len(inner) && inner[i+1] >= '0' && inner[i+1] <= '7'; j++ {
+					i++
+					val = val*8 + int(inner[i]-'0')
+				}
+				buf = append(buf, byte(val))
+			} else {
+				buf = append(buf, '\\', inner[i])
+			}
+		}
+	}
+	return string(buf)
+}
+
 func parsePorcelain(raw string) []ChangedFile {
 	lines := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
 	var out []ChangedFile
@@ -151,6 +219,7 @@ func parsePorcelain(raw string) []ChangedFile {
 }
 
 func fileFromXY(xy, path string) ChangedFile {
+	path = unquoteGitPath(path)
 	if xy == "??" {
 		return ChangedFile{Path: path, IsUntracked: true, HasStaged: false, PorcelainXY: xy}
 	}
@@ -490,7 +559,7 @@ func parseNameStatus(raw string) []ChangedFile {
 			parts = fields
 		}
 		status := parts[0]
-		path := parts[len(parts)-1] // for renames, take the new name
+		path := unquoteGitPath(parts[len(parts)-1]) // for renames, take the new name
 		cf := ChangedFile{
 			Path:        path,
 			IsUntracked: false,
