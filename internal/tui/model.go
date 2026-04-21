@@ -164,6 +164,7 @@ type Model struct {
 	termWidth, termH int
 	leftColW         int
 	rightColW        int
+	leftColWDelta    int // user-adjustable width offset (Ctrl+= / Ctrl+-)
 
 	// expandedDirs maps directory path (filepath.Join) → expanded.
 	// Missing key defaults to expanded.
@@ -717,6 +718,14 @@ func (m *Model) applyWindowSize(width, height int) {
 			left = 12
 		}
 	}
+	// Apply user-adjustable width offset.
+	left += m.leftColWDelta
+	if left < 14 {
+		left = 14
+	}
+	if left >= width-12 {
+		left = width / 4
+	}
 	const seamW = 4
 	right := width - left - seamW
 	if right < 12 {
@@ -1222,6 +1231,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			m.focusLeft = !m.focusLeft
 			return m, nil
+		case "ctrl+=", "ctrl++":
+			m.leftColWDelta += 4
+			m.applyWindowSize(m.termWidth, m.termH)
+			return m, m.previewCmd()
+		case "ctrl+-":
+			m.leftColWDelta -= 4
+			m.applyWindowSize(m.termWidth, m.termH)
+			return m, m.previewCmd()
 		case "d":
 			m.previewShowDeletions = !m.previewShowDeletions
 			return m, m.previewCmd()

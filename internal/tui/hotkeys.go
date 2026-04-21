@@ -57,6 +57,8 @@ func PrintHotkeyHelp(w io.Writer) {
 	printRow("Ctrl+B", "Create new branch from latest main")
 
 	printSection("File tree (left pane)")
+	printRow("Ctrl + =", "Widen left panel")
+	printRow("Ctrl + -", "Narrow left panel")
 	printRow("↑ ↓", "Move through tree rows")
 	printRow("Enter", "On a folder row — expand or collapse children")
 	printRow("j, k", "Down / up (vim-style)")
